@@ -23,7 +23,7 @@ locals {
 
 # S3 Bucket for Athena query results
 resource "aws_s3_bucket" "athena_results" {
-  bucket = "${var.project_name}-athena-results"
+  bucket = "${var.project_name}-athena-results-${var.aws_account_id}"
   
   #tags = merge(var.tags, {
   #  Name = "${var.project_name}-athena-results"
@@ -230,12 +230,21 @@ resource "aws_iam_policy" "athena_access_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+          "s3:GetBucketVersioning"
         ]
         Resource = [
           aws_s3_bucket.athena_results.arn,
           "${aws_s3_bucket.athena_results.arn}/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "identitystore:DescribeUser"
+        ]
+        Resource = "*"
       }
     ]
   })

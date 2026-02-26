@@ -159,7 +159,8 @@ def execute_athena_query(query):
     response = client.start_query_execution(
         QueryString=query,
         QueryExecutionContext={'Database': ATHENA_DATABASE},
-        ResultConfiguration={'OutputLocation': ATHENA_OUTPUT_BUCKET}
+        ResultConfiguration={'OutputLocation': ATHENA_OUTPUT_BUCKET},
+        WorkGroup=ATHENA_WORKGROUP
     )
     qid = response['QueryExecutionId']
     while True:

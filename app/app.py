@@ -17,7 +17,7 @@ st.set_page_config(
     page_title=PAGE_TITLE,
     page_icon=PAGE_ICON,
     layout=LAYOUT,
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # Initialize theme in session state
@@ -51,8 +51,6 @@ modern_style = f"""
     footer {{visibility: hidden;}}
     [data-testid="stToolbar"] {{display: none;}}
     .stDeployButton {{display: none;}}
-    [data-testid="stSidebar"] {{display: none;}}
-    section[data-testid="stSidebar"] {{display: none;}}
     .stApp {{
         background-color: {current_theme['bg']};
         color: {current_theme['text']};
@@ -288,7 +286,33 @@ def main():
             📖 **Learn more about Kiro metrics**: [Kiro Documentation - Monitor and Track](https://kiro.dev/docs/enterprise/monitor-and-track/)
             """)
 
+        # ── Sidebar Navigation ──
+        st.sidebar.markdown("## 🧭 Quick Navigation")
+        st.sidebar.markdown("""
+        **Jump to section:**
+        - [📈 Overall Metrics](#overall-metrics)
+        - [🖥️ Usage by Client Type](#usage-by-client-type)
+        - [🏆 Top 10 Users](#top-10-users)
+          - [🥇 Leaderboard](#leaderboard)
+        - [📅 Daily Activity Trends](#daily-activity-trends)
+        - [📊 Daily by Client Type](#daily-by-client-type)
+        - [💰 Credits Analysis](#credits-analysis)
+        - [💳 Credits Balance](#credits-balance)
+          - [📋 Credits Balance Table](#credits-balance-table)
+        - [🎫 Subscription Tiers](#subscription-tiers)
+        - [👥 User Engagement](#user-engagement)
+          - [📊 User Segmentation](#user-segmentation)
+          - [📅 Activity Timeline](#activity-timeline)
+          - [📋 Detailed Activity Table](#detailed-activity-table)
+        - [🔻 Engagement Funnel](#engagement-funnel)
+          - [📊 Funnel Metrics](#funnel-metrics)
+          - [🔄 Conversion Rates](#conversion-rates)
+        """)
+        
+        st.markdown("---")
+
         # ── Overall Metrics ──
+        st.markdown('<div id="overall-metrics"></div>', unsafe_allow_html=True)
         st.header("📈 Overall Metrics")
 
         query_overall = f"""
@@ -322,6 +346,7 @@ def main():
         st.markdown("---")
 
         # ── Client Type Breakdown ──
+        st.markdown('<div id="usage-by-client-type"></div>', unsafe_allow_html=True)
         st.header("🖥️ Usage by Client Type")
 
         query_client = f"""
@@ -369,6 +394,7 @@ def main():
         st.markdown("---")
 
         # ── Top 10 Users ──
+        st.markdown('<div id="top-10-users"></div>', unsafe_allow_html=True)
         st.header("🏆 Top 10 Users by Messages")
 
         query_top_users = f"""
@@ -394,6 +420,7 @@ def main():
 
         col1, col2 = st.columns([2, 3])
         with col1:
+            st.markdown('<div id="leaderboard"></div>', unsafe_allow_html=True)
             st.subheader("🥇 Leaderboard")
             for idx, row in df_top.iterrows():
                 rank = idx + 1
@@ -415,6 +442,7 @@ def main():
         st.markdown("---")
 
         # ── Daily Activity Trends ──
+        st.markdown('<div id="daily-activity-trends"></div>', unsafe_allow_html=True)
         st.header("📅 Daily Activity Trends")
 
         query_daily = f"""
@@ -468,6 +496,7 @@ def main():
         st.markdown("---")
 
         # ── Daily Trends by Client Type ──
+        st.markdown('<div id="daily-by-client-type"></div>', unsafe_allow_html=True)
         st.header("📊 Daily Trends by Client Type")
 
         query_daily_client = f"""
@@ -511,6 +540,7 @@ def main():
         st.markdown("---")
 
         # ── Credits Analysis ──
+        st.markdown('<div id="credits-analysis"></div>', unsafe_allow_html=True)
         st.header("💰 Credits Analysis")
 
         query_credits_user = f"""
@@ -568,7 +598,67 @@ def main():
 
         st.markdown("---")
 
+        # ── Credits Balance ──
+        st.markdown('<div id="credits-balance"></div>', unsafe_allow_html=True)
+        st.header("💳 Credits Balance by User (Current Month)")
+
+        query_balance = f"""
+        SELECT
+            userid,
+            MAX(subscription_tier) as tier,
+            SUM(TRY_CAST(credits_used AS DOUBLE)) as total_used
+        FROM {table_name}
+        WHERE date >= date_format(current_date, '%Y-%m-01')
+        GROUP BY userid
+        """
+        df_balance = fetch_data(query_balance)
+        df_balance['userid'] = df_balance['userid'].str.replace("'", "").str.replace('"', '')
+        df_balance['total_used'] = df_balance['total_used'].apply(safe_float)
+        
+        # Set credit limit based on tier
+        tier_limits = {'PRO': 1000, 'PROPLUS': 2000, 'POWER': 10000}
+        df_balance['credit_limit'] = df_balance['tier'].map(tier_limits).fillna(1000)
+        df_balance['remaining'] = df_balance['credit_limit'] - df_balance['total_used']
+        df_balance['usage_pct'] = (df_balance['total_used'] / df_balance['credit_limit'] * 100).round(1)
+
+        umap_balance = get_usernames_batch(df_balance['userid'].tolist())
+        df_balance['username'] = df_balance['userid'].map(umap_balance)
+        df_balance = df_balance.sort_values('total_used', ascending=False)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_balance = px.bar(
+                df_balance.head(20), x='total_used', y='username', orientation='h',
+                title='Top 20 Users by Credits Used',
+                color='usage_pct', color_continuous_scale='RdYlGn_r',
+                labels={'total_used': 'Credits Used', 'username': 'User', 'usage_pct': 'Usage %'}
+            )
+            fig_balance.update_traces(marker_line_width=0)
+            fig_balance.update_yaxes(autorange='reversed')
+            apply_chart_theme(fig_balance)
+            st.plotly_chart(fig_balance, use_container_width=True)
+
+        with col2:
+            st.markdown('<div id="credits-balance-table"></div>', unsafe_allow_html=True)
+            st.subheader("📋 Credits Balance Table")
+            
+            # Search box
+            search_term = st.text_input("🔍 Search by username", key="balance_search")
+            
+            df_display = df_balance[['username', 'tier', 'credit_limit', 'total_used', 'remaining', 'usage_pct']].copy()
+            df_display.columns = ['User', 'Tier', 'Limit', 'Used', 'Remaining', 'Usage %']
+            df_display = df_display.sort_values('Used', ascending=False)
+            
+            # Filter by search term
+            if search_term:
+                df_display = df_display[df_display['User'].str.contains(search_term, case=False, na=False)]
+            
+            st.dataframe(df_display, use_container_width=True, height=600)
+
+        st.markdown("---")
+
         # ── Subscription Tier Breakdown ──
+        st.markdown('<div id="subscription-tiers"></div>', unsafe_allow_html=True)
         st.header("🎫 Subscription Tier Breakdown")
 
         query_tier = f"""
@@ -614,6 +704,7 @@ def main():
         st.markdown("---")
 
         # ── User Engagement Analysis ──
+        st.markdown('<div id="user-engagement"></div>', unsafe_allow_html=True)
         st.header("👥 User Engagement Analysis")
 
         query_users = f"""
@@ -636,6 +727,7 @@ def main():
         df_users['username'] = df_users['userid'].map(umap_users)
 
         # User segmentation
+        st.markdown('<div id="user-segmentation"></div>', unsafe_allow_html=True)
         st.subheader("📊 User Segmentation")
 
         def categorize_user(row):
@@ -694,6 +786,7 @@ def main():
         st.markdown("---")
 
         # ── User Activity Timeline ──
+        st.markdown('<div id="activity-timeline"></div>', unsafe_allow_html=True)
         st.subheader("📅 User Activity Timeline")
 
         query_activity = f"""
@@ -748,6 +841,7 @@ def main():
             st.plotly_chart(fig_days, use_container_width=True)
 
         # Detailed table
+        st.markdown('<div id="detailed-activity-table"></div>', unsafe_allow_html=True)
         st.markdown("#### 📋 Detailed User Activity Table")
         df_display = df_act_merged[['username', 'category', 'last_active_date',
                                      'days_since_last_active', 'active_days',
@@ -797,6 +891,7 @@ def main():
         st.markdown("---")
 
         # ── User Engagement Funnel ──
+        st.markdown('<div id="engagement-funnel"></div>', unsafe_allow_html=True)
         st.header("🔻 User Engagement Funnel")
 
         total_users = len(df_users)
@@ -827,6 +922,7 @@ def main():
             st.plotly_chart(fig_funnel, use_container_width=True)
 
         with col2:
+            st.markdown('<div id="funnel-metrics"></div>', unsafe_allow_html=True)
             st.subheader("📊 Funnel Metrics")
             for _, row in funnel_data.iterrows():
                 st.metric(label=row['Stage'], value=f"{row['Count']} users",
@@ -834,6 +930,7 @@ def main():
                 st.markdown("")
 
             st.markdown("---")
+            st.markdown('<div id="conversion-rates"></div>', unsafe_allow_html=True)
             st.subheader("🔄 Conversion Rates")
             if total_users > 0:
                 st.markdown(f"**Message Activation:** {users_with_messages / total_users * 100:.1f}%")

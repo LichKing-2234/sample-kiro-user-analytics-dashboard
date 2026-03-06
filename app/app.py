@@ -637,21 +637,36 @@ def main():
         st.header("💳 Credits Balance by User (Current Month)")
 
         query_balance = f"""
+        WITH latest_tier AS (
+            SELECT 
+                userid,
+                subscription_tier,
+                client_type,
+                ROW_NUMBER() OVER (PARTITION BY userid ORDER BY date DESC) as rn
+            FROM {table_name}
+            WHERE date >= date_format(current_date, '%Y-%m-01')
+        )
         SELECT
-            userid,
-            MAX(subscription_tier) as tier,
-            SUM(TRY_CAST(credits_used AS DOUBLE)) as total_used
-        FROM {table_name}
-        WHERE date >= date_format(current_date, '%Y-%m-01')
-        GROUP BY userid
+            t.userid,
+            lt.client_type,
+            lt.subscription_tier,
+            SUM(TRY_CAST(t.credits_used AS DOUBLE)) as total_used
+        FROM {table_name} t
+        JOIN latest_tier lt ON t.userid = lt.userid AND lt.rn = 1
+        WHERE t.date >= date_format(current_date, '%Y-%m-01')
+        GROUP BY t.userid, lt.client_type, lt.subscription_tier
         """
         df_balance = fetch_data(query_balance)
         df_balance['userid'] = df_balance['userid'].str.replace("'", "").str.replace('"', '')
         df_balance['total_used'] = df_balance['total_used'].apply(safe_float)
         
-        # Set credit limit based on tier
-        tier_limits = {'PRO': 1000, 'PROPLUS': 2000, 'POWER': 10000}
-        df_balance['credit_limit'] = df_balance['tier'].map(tier_limits).fillna(1000)
+        # Set credit limit based on tier (handle both PROPLUS and PRO_PLUS formats)
+        def get_credit_limit(tier):
+            tier_upper = str(tier).upper().replace('_', '').replace('-', '').strip()
+            tier_limits = {'PRO': 1000, 'PROPLUS': 2000, 'POWER': 10000}
+            return tier_limits.get(tier_upper, 1000)
+        
+        df_balance['credit_limit'] = df_balance['subscription_tier'].apply(get_credit_limit)
         df_balance['remaining'] = df_balance['credit_limit'] - df_balance['total_used']
         df_balance['usage_pct'] = (df_balance['total_used'] / df_balance['credit_limit'] * 100).round(1)
 
@@ -679,15 +694,16 @@ def main():
             # Search box
             search_term = st.text_input("🔍 Search by username", key="balance_search")
             
-            df_display = df_balance[['username', 'tier', 'credit_limit', 'total_used', 'remaining', 'usage_pct']].copy()
-            df_display.columns = ['User', 'Tier', 'Limit', 'Used', 'Remaining', 'Usage %']
+            df_display = df_balance[['username', 'client_type', 'subscription_tier', 'credit_limit', 'total_used', 'remaining', 'usage_pct']].copy()
+            df_display.columns = ['User', 'Client_Type', 'Subscription_Tier', 'Limit', 'Used', 'Remaining', 'Usage %']
             df_display = df_display.sort_values('Used', ascending=False)
+            df_display.insert(0, 'Rank', range(1, len(df_display) + 1))
             
             # Filter by search term
             if search_term:
                 df_display = df_display[df_display['User'].str.contains(search_term, case=False, na=False)]
             
-            st.dataframe(df_display, use_container_width=True, height=600)
+            st.dataframe(df_display, use_container_width=True, height=600, hide_index=True)
 
         st.markdown("---")
 

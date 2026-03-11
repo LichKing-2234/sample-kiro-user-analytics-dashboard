@@ -368,19 +368,32 @@ def main():
 
         query_client = f"""
         SELECT
+            userid,
+            date,
             client_type,
-            COUNT(DISTINCT userid) as unique_users,
-            SUM(TRY_CAST(total_messages AS INTEGER)) as total_messages,
-            SUM(TRY_CAST(chat_conversations AS INTEGER)) as total_conversations,
-            SUM(TRY_CAST(credits_used AS DOUBLE)) as total_credits
+            TRY_CAST(total_messages AS INTEGER) as total_messages,
+            TRY_CAST(chat_conversations AS INTEGER) as total_conversations,
+            TRY_CAST(credits_used AS DOUBLE) as total_credits
         FROM {table_name}
-        GROUP BY client_type
-        ORDER BY total_messages DESC
         """
-        df_client = fetch_data(query_client)
-        for c in ['unique_users', 'total_messages', 'total_conversations']:
-            df_client[c] = df_client[c].apply(safe_int)
-        df_client['total_credits'] = df_client['total_credits'].apply(safe_float)
+        df_client_raw = fetch_data(query_client)
+        df_client_raw['userid'] = df_client_raw['userid'].apply(clean_userid)
+        for c in ['total_messages', 'total_conversations']:
+            df_client_raw[c] = df_client_raw[c].apply(safe_int)
+        df_client_raw['total_credits'] = df_client_raw['total_credits'].apply(safe_float)
+        
+        # Use latest client_type per user
+        df_client_raw = df_client_raw.sort_values('date', ascending=False)
+        df_client_latest = df_client_raw.groupby('userid', as_index=False).first()[['userid', 'client_type']]
+        df_client_agg = df_client_raw.groupby('userid', as_index=False).agg({
+            'total_messages': 'sum', 'total_conversations': 'sum', 'total_credits': 'sum'
+        })
+        df_client_merged = df_client_latest.merge(df_client_agg, on='userid')
+        df_client = df_client_merged.groupby('client_type', as_index=False).agg({
+            'userid': 'nunique', 'total_messages': 'sum', 'total_conversations': 'sum', 'total_credits': 'sum'
+        })
+        df_client.columns = ['client_type', 'unique_users', 'total_messages', 'total_conversations', 'total_credits']
+        df_client = df_client.sort_values('total_messages', ascending=False)
 
         col1, col2 = st.columns(2)
         with col1:
@@ -663,34 +676,25 @@ def main():
         st.header("💳 Credits Balance by User (Current Month)")
 
         query_balance = f"""
-        WITH latest_record AS (
-            SELECT 
-                userid,
-                subscription_tier,
-                client_type,
-                ROW_NUMBER() OVER (PARTITION BY userid ORDER BY date DESC) as rn
-            FROM {table_name}
-            WHERE date >= date_format(current_date, '%Y-%m-01')
-        ),
-        user_credits AS (
-            SELECT
-                userid,
-                SUM(TRY_CAST(credits_used AS DOUBLE)) as total_used
-            FROM {table_name}
-            WHERE date >= date_format(current_date, '%Y-%m-01')
-            GROUP BY userid
-        )
         SELECT
-            uc.userid,
-            lr.client_type,
-            lr.subscription_tier,
-            uc.total_used
-        FROM user_credits uc
-        JOIN latest_record lr ON uc.userid = lr.userid AND lr.rn = 1
+            userid,
+            date,
+            client_type,
+            subscription_tier,
+            TRY_CAST(credits_used AS DOUBLE) as credits_used
+        FROM {table_name}
+        WHERE date >= date_format(current_date, '%Y-%m-01')
         """
-        df_balance = fetch_data(query_balance)
-        df_balance['userid'] = df_balance['userid'].apply(clean_userid)
-        df_balance['total_used'] = df_balance['total_used'].apply(safe_float)
+        df_balance_raw = fetch_data(query_balance)
+        df_balance_raw['userid'] = df_balance_raw['userid'].apply(clean_userid)
+        df_balance_raw['credits_used'] = df_balance_raw['credits_used'].apply(safe_float)
+        
+        # Get latest record's tier and client_type per user
+        df_balance_raw = df_balance_raw.sort_values('date', ascending=False)
+        df_latest = df_balance_raw.groupby('userid', as_index=False).first()[['userid', 'client_type', 'subscription_tier']]
+        df_used = df_balance_raw.groupby('userid', as_index=False).agg({'credits_used': 'sum'})
+        df_used.columns = ['userid', 'total_used']
+        df_balance = df_latest.merge(df_used, on='userid')
         
         # Set credit limit based on tier (handle both PROPLUS and PRO_PLUS formats)
         def get_credit_limit(tier):
@@ -775,18 +779,30 @@ def main():
 
         query_tier = f"""
         SELECT
+            userid,
+            date,
             subscription_tier,
-            COUNT(DISTINCT userid) as unique_users,
-            SUM(TRY_CAST(total_messages AS INTEGER)) as total_messages,
-            SUM(TRY_CAST(credits_used AS DOUBLE)) as total_credits
+            TRY_CAST(total_messages AS INTEGER) as total_messages,
+            TRY_CAST(credits_used AS DOUBLE) as total_credits
         FROM {table_name}
-        GROUP BY subscription_tier
-        ORDER BY total_messages DESC
         """
-        df_tier = fetch_data(query_tier)
-        df_tier['unique_users'] = df_tier['unique_users'].apply(safe_int)
-        df_tier['total_messages'] = df_tier['total_messages'].apply(safe_int)
-        df_tier['total_credits'] = df_tier['total_credits'].apply(safe_float)
+        df_tier_raw = fetch_data(query_tier)
+        df_tier_raw['userid'] = df_tier_raw['userid'].apply(clean_userid)
+        df_tier_raw['total_messages'] = df_tier_raw['total_messages'].apply(safe_int)
+        df_tier_raw['total_credits'] = df_tier_raw['total_credits'].apply(safe_float)
+        
+        # Use latest subscription_tier per user
+        df_tier_raw = df_tier_raw.sort_values('date', ascending=False)
+        df_tier_latest = df_tier_raw.groupby('userid', as_index=False).first()[['userid', 'subscription_tier']]
+        df_tier_agg = df_tier_raw.groupby('userid', as_index=False).agg({
+            'total_messages': 'sum', 'total_credits': 'sum'
+        })
+        df_tier_merged = df_tier_latest.merge(df_tier_agg, on='userid')
+        df_tier = df_tier_merged.groupby('subscription_tier', as_index=False).agg({
+            'userid': 'nunique', 'total_messages': 'sum', 'total_credits': 'sum'
+        })
+        df_tier.columns = ['subscription_tier', 'unique_users', 'total_messages', 'total_credits']
+        df_tier = df_tier.sort_values('total_messages', ascending=False)
 
         col1, col2 = st.columns(2)
         with col1:

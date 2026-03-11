@@ -304,6 +304,7 @@ def main():
         - [📅 Daily Activity Trends](#daily-activity-trends)
         - [📊 Daily by Client Type](#daily-by-client-type)
         - [💰 Credits Analysis](#credits-analysis)
+          - [📅 Credit Usage by Month](#credit-usage-by-month)
         - [💳 Credits Balance](#credits-balance)
           - [📋 Credits Balance Table](#credits-balance-table)
         - [🎫 Subscription Tiers](#subscription-tiers)
@@ -617,6 +618,7 @@ def main():
             st.plotly_chart(fig_overage, use_container_width=True)
 
         # Monthly credit usage by user table
+        st.markdown('<div id="credit-usage-by-month"></div>', unsafe_allow_html=True)
         st.subheader("📅 Credit Usage by User by Month")
 
         query_credits_monthly = f"""
@@ -629,8 +631,11 @@ def main():
         ORDER BY month, userid
         """
         df_credits_monthly = fetch_data(query_credits_monthly)
-        df_credits_monthly['userid'] = df_credits_monthly['userid'].str.replace("'", "").str.replace('"', '')
+        df_credits_monthly['userid'] = df_credits_monthly['userid'].apply(clean_userid)
         df_credits_monthly['credits_used'] = df_credits_monthly['credits_used'].apply(safe_float)
+        df_credits_monthly = df_credits_monthly.groupby(['userid', 'month'], as_index=False).agg({
+            'credits_used': 'sum'
+        })
 
         umap_monthly = get_usernames_batch(df_credits_monthly['userid'].unique().tolist())
         df_credits_monthly['User'] = df_credits_monthly['userid'].map(umap_monthly)

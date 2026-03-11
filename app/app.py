@@ -234,6 +234,13 @@ def safe_int(val, default=0):
     except (ValueError, TypeError):
         return default
 
+def clean_userid(uid):
+    """Remove quotes and 'd-xxxxx.' prefix from userid."""
+    uid = str(uid).replace("'", "").replace('"', '')
+    if '.' in uid:
+        uid = uid.split('.', 1)[-1]
+    return uid
+
 # --- Main app ---
 
 def main():
@@ -317,30 +324,38 @@ def main():
 
         query_overall = f"""
         SELECT
-            COUNT(DISTINCT userid) as total_users,
+            userid,
             SUM(TRY_CAST(total_messages AS INTEGER)) as total_messages,
             SUM(TRY_CAST(chat_conversations AS INTEGER)) as total_conversations,
             SUM(TRY_CAST(credits_used AS DOUBLE)) as total_credits,
             SUM(TRY_CAST(overage_credits_used AS DOUBLE)) as total_overage
         FROM {table_name}
+        GROUP BY userid
         """
-        df_overall = fetch_data(query_overall)
+        df_overall_raw = fetch_data(query_overall)
+        df_overall_raw['userid'] = df_overall_raw['userid'].apply(clean_userid)
+        df_overall_agg = df_overall_raw.groupby('userid', as_index=False).agg({
+            'total_messages': lambda x: sum(safe_int(v) for v in x),
+            'total_conversations': lambda x: sum(safe_int(v) for v in x),
+            'total_credits': lambda x: sum(safe_float(v) for v in x),
+            'total_overage': lambda x: sum(safe_float(v) for v in x),
+        })
 
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("Total Users", safe_int(df_overall['total_users'].iloc[0]),
+            st.metric("Total Users", len(df_overall_agg),
                       help="Unique users who have used Kiro")
         with col2:
-            st.metric("Total Messages", f"{safe_int(df_overall['total_messages'].iloc[0]):,}",
+            st.metric("Total Messages", f"{df_overall_agg['total_messages'].sum():,}",
                       help="Total messages sent to Kiro")
         with col3:
-            st.metric("Chat Conversations", f"{safe_int(df_overall['total_conversations'].iloc[0]):,}",
+            st.metric("Chat Conversations", f"{df_overall_agg['total_conversations'].sum():,}",
                       help="Total chat conversations initiated")
         with col4:
-            st.metric("Credits Used", f"{safe_float(df_overall['total_credits'].iloc[0]):,.1f}",
+            st.metric("Credits Used", f"{df_overall_agg['total_credits'].sum():,.1f}",
                       help="Total credits consumed across all users and client types")
         with col5:
-            st.metric("Overage Credits", f"{safe_float(df_overall['total_overage'].iloc[0]):,.1f}",
+            st.metric("Overage Credits", f"{df_overall_agg['total_overage'].sum():,.1f}",
                       help="Total overage credits consumed")
 
         st.markdown("---")
@@ -406,13 +421,15 @@ def main():
         FROM {table_name}
         GROUP BY userid
         ORDER BY total_messages DESC
-        LIMIT 10
         """
         df_top = fetch_data(query_top_users)
-        df_top['userid'] = df_top['userid'].str.replace("'", "").str.replace('"', '')
+        df_top['userid'] = df_top['userid'].apply(clean_userid)
         df_top['total_messages'] = df_top['total_messages'].apply(safe_int)
         df_top['total_conversations'] = df_top['total_conversations'].apply(safe_int)
         df_top['total_credits'] = df_top['total_credits'].apply(safe_float)
+        df_top = df_top.groupby('userid', as_index=False).agg({
+            'total_messages': 'sum', 'total_conversations': 'sum', 'total_credits': 'sum'
+        }).sort_values('total_messages', ascending=False).head(10)
 
         userids = df_top['userid'].tolist()
         umap = get_usernames_batch(userids)
@@ -555,10 +572,13 @@ def main():
         ORDER BY total_credits DESC
         """
         df_credits = fetch_data(query_credits_user)
-        df_credits['userid'] = df_credits['userid'].str.replace("'", "").str.replace('"', '')
+        df_credits['userid'] = df_credits['userid'].apply(clean_userid)
         df_credits['total_credits'] = df_credits['total_credits'].apply(safe_float)
         df_credits['total_overage'] = df_credits['total_overage'].apply(safe_float)
         df_credits['overage_cap'] = df_credits['overage_cap'].apply(safe_float)
+        df_credits = df_credits.groupby('userid', as_index=False).agg({
+            'total_credits': 'sum', 'total_overage': 'sum', 'overage_cap': 'max', 'overage_enabled': 'first'
+        }).sort_values('total_credits', ascending=False)
 
         umap_credits = get_usernames_batch(df_credits['userid'].tolist())
         df_credits['username'] = df_credits['userid'].map(umap_credits)
@@ -637,7 +657,7 @@ def main():
         st.header("💳 Credits Balance by User (Current Month)")
 
         query_balance = f"""
-        WITH latest_tier AS (
+        WITH latest_record AS (
             SELECT 
                 userid,
                 subscription_tier,
@@ -645,19 +665,25 @@ def main():
                 ROW_NUMBER() OVER (PARTITION BY userid ORDER BY date DESC) as rn
             FROM {table_name}
             WHERE date >= date_format(current_date, '%Y-%m-01')
+        ),
+        user_credits AS (
+            SELECT
+                userid,
+                SUM(TRY_CAST(credits_used AS DOUBLE)) as total_used
+            FROM {table_name}
+            WHERE date >= date_format(current_date, '%Y-%m-01')
+            GROUP BY userid
         )
         SELECT
-            t.userid,
-            lt.client_type,
-            lt.subscription_tier,
-            SUM(TRY_CAST(t.credits_used AS DOUBLE)) as total_used
-        FROM {table_name} t
-        JOIN latest_tier lt ON t.userid = lt.userid AND lt.rn = 1
-        WHERE t.date >= date_format(current_date, '%Y-%m-01')
-        GROUP BY t.userid, lt.client_type, lt.subscription_tier
+            uc.userid,
+            lr.client_type,
+            lr.subscription_tier,
+            uc.total_used
+        FROM user_credits uc
+        JOIN latest_record lr ON uc.userid = lr.userid AND lr.rn = 1
         """
         df_balance = fetch_data(query_balance)
-        df_balance['userid'] = df_balance['userid'].str.replace("'", "").str.replace('"', '')
+        df_balance['userid'] = df_balance['userid'].apply(clean_userid)
         df_balance['total_used'] = df_balance['total_used'].apply(safe_float)
         
         # Set credit limit based on tier (handle both PROPLUS and PRO_PLUS formats)
@@ -667,11 +693,20 @@ def main():
             return tier_limits.get(tier_upper, 1000)
         
         df_balance['credit_limit'] = df_balance['subscription_tier'].apply(get_credit_limit)
-        df_balance['remaining'] = df_balance['credit_limit'] - df_balance['total_used']
-        df_balance['usage_pct'] = (df_balance['total_used'] / df_balance['credit_limit'] * 100).round(1)
 
         umap_balance = get_usernames_batch(df_balance['userid'].tolist())
         df_balance['username'] = df_balance['userid'].map(umap_balance)
+        
+        # Deduplicate by username: aggregate if same user appears multiple times
+        df_balance = df_balance.groupby('username', as_index=False).agg({
+            'userid': 'first',
+            'client_type': 'first',
+            'subscription_tier': 'first',
+            'total_used': 'sum',
+            'credit_limit': 'first'
+        })
+        df_balance['remaining'] = df_balance['credit_limit'] - df_balance['total_used']
+        df_balance['usage_pct'] = (df_balance['total_used'] / df_balance['credit_limit'] * 100).round(1)
         df_balance = df_balance.sort_values('total_used', ascending=False)
 
         col1, col2 = st.columns(2)
@@ -768,10 +803,13 @@ def main():
         ORDER BY total_messages DESC
         """
         df_users = fetch_data(query_users)
-        df_users['userid'] = df_users['userid'].str.replace("'", "").str.replace('"', '')
+        df_users['userid'] = df_users['userid'].apply(clean_userid)
         df_users['total_messages'] = df_users['total_messages'].apply(safe_int)
         df_users['total_conversations'] = df_users['total_conversations'].apply(safe_int)
         df_users['total_credits'] = df_users['total_credits'].apply(safe_float)
+        df_users = df_users.groupby('userid', as_index=False).agg({
+            'total_messages': 'sum', 'total_conversations': 'sum', 'total_credits': 'sum'
+        }).sort_values('total_messages', ascending=False)
 
         umap_users = get_usernames_batch(df_users['userid'].tolist())
         df_users['username'] = df_users['userid'].map(umap_users)
@@ -849,10 +887,13 @@ def main():
         GROUP BY userid
         """
         df_activity = fetch_data(query_activity)
-        df_activity['userid'] = df_activity['userid'].str.replace("'", "").str.replace('"', '')
+        df_activity['userid'] = df_activity['userid'].apply(clean_userid)
         df_activity['last_active_date'] = pd.to_datetime(df_activity['last_active_date'])
         df_activity['first_active_date'] = pd.to_datetime(df_activity['first_active_date'])
         df_activity['active_days'] = df_activity['active_days'].apply(safe_int)
+        df_activity = df_activity.groupby('userid', as_index=False).agg({
+            'last_active_date': 'max', 'first_active_date': 'min', 'active_days': 'sum'
+        })
         df_activity['days_since_last_active'] = (pd.Timestamp.now() - df_activity['last_active_date']).dt.days
 
         umap_act = get_usernames_batch(df_activity['userid'].tolist())

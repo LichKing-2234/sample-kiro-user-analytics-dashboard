@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -731,19 +732,40 @@ def main():
             st.markdown('<div id="credits-balance-table"></div>', unsafe_allow_html=True)
             st.subheader("📋 Credits Balance Table")
             
-            # Search box
-            search_term = st.text_input("🔍 Search by username", key="balance_search")
-            
             df_display = df_balance[['username', 'client_type', 'subscription_tier', 'credit_limit', 'total_used', 'remaining', 'usage_pct']].copy()
             df_display.columns = ['User', 'Client_Type', 'Subscription_Tier', 'Limit', 'Used', 'Remaining', 'Usage %']
             df_display = df_display.sort_values('Used', ascending=False)
             df_display.insert(0, 'Rank', range(1, len(df_display) + 1))
             
-            # Filter by search term
-            if search_term:
-                df_display = df_display[df_display['User'].str.contains(search_term, case=False, na=False)]
+            html_table = df_display.to_html(index=False, table_id='balanceTable', border=0)
+            bg = current_theme['bg']
+            sbg = current_theme['secondary_bg']
+            tc = current_theme['text']
+            bc = current_theme['border']
             
-            st.dataframe(df_display, use_container_width=True, height=600, hide_index=True)
+            components.html(f"""
+            <style>
+            body {{background:{bg};color:{tc};font-family:Inter,system-ui,sans-serif;margin:0;}}
+            #searchBox {{width:100%;padding:8px 12px;margin-bottom:10px;border:1px solid {bc};border-radius:6px;font-size:14px;background:{sbg};color:{tc};box-sizing:border-box;}}
+            #balanceTable {{width:100%;border-collapse:collapse;font-size:13px;}}
+            #balanceTable th {{position:sticky;top:0;background:{sbg};padding:8px 6px;text-align:left;border-bottom:2px solid {bc};color:{tc};}}
+            #balanceTable td {{padding:6px;border-bottom:1px solid {bc};color:{tc};}}
+            #balanceTable tr:hover {{background:{sbg};}}
+            </style>
+            <input type="text" id="searchBox" placeholder="🔍 Search by username...">
+            <div style="overflow-y:auto;max-height:520px;">
+            {html_table}
+            </div>
+            <script>
+            document.getElementById('searchBox').addEventListener('input',function(){{
+                var v=this.value.toLowerCase();
+                var rows=document.querySelectorAll('#balanceTable tbody tr');
+                for(var i=0;i<rows.length;i++){{
+                    rows[i].style.display=rows[i].textContent.toLowerCase().indexOf(v)>=0?'':'none';
+                }}
+            }});
+            </script>
+            """, height=650)
 
         st.markdown("---")
 

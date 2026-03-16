@@ -8,6 +8,7 @@ import boto3
 from datetime import datetime
 import time
 from config import *
+import extensions as ext
 
 # Hide deploy button
 os.environ['STREAMLIT_SERVER_ENABLE_STATIC_SERVING'] = 'false'
@@ -17,7 +18,7 @@ st.set_page_config(
     page_title=PAGE_TITLE,
     page_icon=PAGE_ICON,
     layout=LAYOUT,
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # Initialize theme in session state
@@ -51,8 +52,6 @@ modern_style = f"""
     footer {{visibility: hidden;}}
     [data-testid="stToolbar"] {{display: none;}}
     .stDeployButton {{display: none;}}
-    [data-testid="stSidebar"] {{display: none;}}
-    section[data-testid="stSidebar"] {{display: none;}}
     .stApp {{
         background-color: {current_theme['bg']};
         color: {current_theme['text']};
@@ -102,6 +101,15 @@ modern_style = f"""
     div[data-testid="stPlotlyChart"] {{
         border-radius: 12px;
         overflow: hidden;
+    }}
+    [data-testid="stSidebar"] {{
+        background-color: {current_theme['secondary_bg']};
+    }}
+    [data-testid="stSidebar"] * {{
+        color: {current_theme['text']} !important;
+    }}
+    [data-testid="stHeader"] {{
+        background-color: {current_theme['bg']};
     }}
     </style>
 """
@@ -159,7 +167,8 @@ def execute_athena_query(query):
     response = client.start_query_execution(
         QueryString=query,
         QueryExecutionContext={'Database': ATHENA_DATABASE},
-        ResultConfiguration={'OutputLocation': ATHENA_OUTPUT_BUCKET}
+        ResultConfiguration={'OutputLocation': ATHENA_OUTPUT_BUCKET},
+        WorkGroup=ATHENA_WORKGROUP
     )
     qid = response['QueryExecutionId']
     while True:
@@ -287,8 +296,11 @@ def main():
             📖 **Learn more about Kiro metrics**: [Kiro Documentation - Monitor and Track](https://kiro.dev/docs/enterprise/monitor-and-track/)
             """)
 
+        ext.render_sidebar_nav()
+        st.markdown("---")
+
         # ── Overall Metrics ──
-        st.header("📈 Overall Metrics")
+        ext.section_header("📈 Overall Metrics")
 
         query_overall = f"""
         SELECT
@@ -321,7 +333,7 @@ def main():
         st.markdown("---")
 
         # ── Client Type Breakdown ──
-        st.header("🖥️ Usage by Client Type")
+        ext.section_header("🖥️ Usage by Client Type")
 
         query_client = f"""
         SELECT
@@ -368,7 +380,7 @@ def main():
         st.markdown("---")
 
         # ── Top 10 Users ──
-        st.header("🏆 Top 10 Users by Messages")
+        ext.section_header("🏆 Top 10 Users by Messages")
 
         query_top_users = f"""
         SELECT
@@ -414,7 +426,7 @@ def main():
         st.markdown("---")
 
         # ── Daily Activity Trends ──
-        st.header("📅 Daily Activity Trends")
+        ext.section_header("📅 Daily Activity Trends")
 
         query_daily = f"""
         SELECT
@@ -467,7 +479,7 @@ def main():
         st.markdown("---")
 
         # ── Daily Trends by Client Type ──
-        st.header("📊 Daily Trends by Client Type")
+        ext.section_header("📊 Daily Trends by Client Type")
 
         query_daily_client = f"""
         SELECT
@@ -510,7 +522,7 @@ def main():
         st.markdown("---")
 
         # ── Credits Analysis ──
-        st.header("💰 Credits Analysis")
+        ext.section_header("💰 Credits Analysis")
 
         query_credits_user = f"""
         SELECT
@@ -600,9 +612,11 @@ def main():
         st.dataframe(df_pivot, use_container_width=True, height=400)
 
         st.markdown("---")
+        ext.render_credits_balance(table_name, fetch_data, safe_float,
+                                   get_usernames_batch, apply_chart_theme, current_theme)
 
         # ── Subscription Tier Breakdown ──
-        st.header("🎫 Subscription Tier Breakdown")
+        ext.section_header("🎫 Subscription Tier Breakdown")
 
         query_tier = f"""
         SELECT
@@ -647,7 +661,7 @@ def main():
         st.markdown("---")
 
         # ── User Engagement Analysis ──
-        st.header("👥 User Engagement Analysis")
+        ext.section_header("👥 User Engagement Analysis")
 
         query_users = f"""
         SELECT
@@ -830,7 +844,7 @@ def main():
         st.markdown("---")
 
         # ── User Engagement Funnel ──
-        st.header("🔻 User Engagement Funnel")
+        ext.section_header("🔻 User Engagement Funnel")
 
         total_users = len(df_users)
         users_with_messages = len(df_users[df_users['total_messages'] > 0])
@@ -875,6 +889,8 @@ def main():
                     st.markdown(f"**Active Retention:** {active_users / users_with_messages * 100:.1f}%")
                 if active_users > 0:
                     st.markdown(f"**Power User Growth:** {power_users / active_users * 100:.1f}%")
+
+        ext.flush_sidebar_nav()
 
     except Exception as e:
         st.error(f"Error fetching data: {str(e)}")

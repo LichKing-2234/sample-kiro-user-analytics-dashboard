@@ -27,3 +27,13 @@ output "s3_data_path" {
   description = "Full S3 data path including account ID and region"
   value       = "s3://${local.s3_data_path}/"
 }
+
+output "athena_workgroup" {
+  description = "Athena workgroup name"
+  value       = aws_athena_workgroup.analytics_workgroup.name
+}
+
+output "create_view_query_id" {
+  description = "Named query ID for creating the cleaned view"
+  value       = aws_athena_named_query.create_cleaned_view.id
+}

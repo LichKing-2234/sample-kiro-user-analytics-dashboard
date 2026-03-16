@@ -11,6 +11,7 @@ if env_path.exists():
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 ATHENA_DATABASE = os.getenv('ATHENA_DATABASE', '')
 ATHENA_OUTPUT_BUCKET = os.getenv('ATHENA_OUTPUT_BUCKET', '')
+ATHENA_WORKGROUP = os.getenv('ATHENA_WORKGROUP', 'primary')
 GLUE_TABLE_NAME = os.getenv('GLUE_TABLE_NAME', '')
 IDENTITY_STORE_ID = os.getenv('IDENTITY_STORE_ID', '')
 

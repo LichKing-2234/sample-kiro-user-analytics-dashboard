@@ -23,7 +23,7 @@ locals {
 
 # S3 Bucket for Athena query results
 resource "aws_s3_bucket" "athena_results" {
-  bucket = "${var.project_name}-athena-results"
+  bucket = "${var.project_name}-athena-results-${var.aws_account_id}"
   
   #tags = merge(var.tags, {
   #  Name = "${var.project_name}-athena-results"
@@ -159,6 +159,36 @@ resource "aws_glue_crawler" "analytics_crawler" {
   #tags = var.tags
 }
 
+# Athena Named Query — creates a cleaned View on top of the raw Glue table.
+# The View normalizes userid (strips 'd-xxxxx.' prefix and quotes) so that
+# downstream queries get correct COUNT(DISTINCT userid) without Python-side dedup.
+# Run this query once after the Glue crawler finishes (deploy.sh does it automatically).
+resource "aws_athena_named_query" "create_cleaned_view" {
+  name        = "${var.project_name}-create-cleaned-view"
+  database    = aws_glue_catalog_database.analytics_db.name
+  workgroup   = aws_athena_workgroup.analytics_workgroup.name
+  description = "Creates the kiro_user_report_cleaned view with normalized userid"
+  query       = <<-EOQ
+    CREATE OR REPLACE VIEW kiro_user_report_cleaned AS
+    SELECT
+      CASE
+        WHEN userid LIKE '%.%' THEN substr(userid, strpos(userid, '.') + 1)
+        ELSE replace(replace(userid, chr(39), ''), chr(34), '')
+      END AS userid,
+      date,
+      client_type,
+      subscription_tier,
+      profileid,
+      total_messages,
+      chat_conversations,
+      credits_used,
+      overage_credits_used,
+      overage_cap,
+      overage_enabled
+    FROM ${var.glue_raw_table_name}
+  EOQ
+}
+
 # Athena Workgroup
 resource "aws_athena_workgroup" "analytics_workgroup" {
   name = "${var.project_name}-workgroup"
@@ -230,12 +260,21 @@ resource "aws_iam_policy" "athena_access_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+          "s3:GetBucketVersioning"
         ]
         Resource = [
           aws_s3_bucket.athena_results.arn,
           "${aws_s3_bucket.athena_results.arn}/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "identitystore:DescribeUser"
+        ]
+        Resource = "*"
       }
     ]
   })

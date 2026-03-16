@@ -37,6 +37,12 @@ variable "identity_store_id" {
   type        = string
 }
 
+variable "glue_raw_table_name" {
+  description = "Name of the raw Glue table created by the crawler (used to build the cleaned View)"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)

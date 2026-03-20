@@ -170,22 +170,48 @@ resource "aws_athena_named_query" "create_cleaned_view" {
   description = "Creates the kiro_user_report_cleaned view with normalized userid"
   query       = <<-EOQ
     CREATE OR REPLACE VIEW kiro_user_report_cleaned AS
+    WITH normalized AS (
+      SELECT
+        CASE
+          WHEN userid LIKE '%.%' THEN substr(userid, strpos(userid, '.') + 1)
+          ELSE replace(replace(userid, chr(39), ''), chr(34), '')
+        END AS userid,
+        date,
+        client_type,
+        subscription_tier AS original_subscription_tier,
+        profileid,
+        total_messages,
+        chat_conversations,
+        credits_used,
+        overage_credits_used,
+        overage_cap,
+        overage_enabled
+      FROM ${var.glue_raw_table_name}
+    ),
+    latest_tier AS (
+      SELECT userid, original_subscription_tier AS subscription_tier
+      FROM (
+        SELECT userid, original_subscription_tier,
+          ROW_NUMBER() OVER (PARTITION BY userid ORDER BY date DESC,
+            CASE UPPER(REPLACE(original_subscription_tier, '_', ''))
+              WHEN 'POWER' THEN 3 WHEN 'PROPLUS' THEN 2 ELSE 1 END DESC) AS rn
+        FROM normalized
+      ) WHERE rn = 1
+    )
     SELECT
-      CASE
-        WHEN userid LIKE '%.%' THEN substr(userid, strpos(userid, '.') + 1)
-        ELSE replace(replace(userid, chr(39), ''), chr(34), '')
-      END AS userid,
-      date,
-      client_type,
-      subscription_tier,
-      profileid,
-      total_messages,
-      chat_conversations,
-      credits_used,
-      overage_credits_used,
-      overage_cap,
-      overage_enabled
-    FROM ${var.glue_raw_table_name}
+      n.userid,
+      n.date,
+      n.client_type,
+      lt.subscription_tier,
+      n.profileid,
+      n.total_messages,
+      n.chat_conversations,
+      n.credits_used,
+      n.overage_credits_used,
+      n.overage_cap,
+      n.overage_enabled
+    FROM normalized n
+    JOIN latest_tier lt ON n.userid = lt.userid
   EOQ
 }
 

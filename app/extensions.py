@@ -47,19 +47,16 @@ def render_credits_balance(table_name, fetch_data, safe_float,
     section_header("💳 Credits Balance by User (Current Month)")
 
     query = f"""
-    SELECT userid, date, client_type, subscription_tier,
-        TRY_CAST(credits_used AS DOUBLE) as credits_used
+    SELECT userid,
+        MAX(client_type) as client_type,
+        MAX(subscription_tier) as subscription_tier,
+        SUM(TRY_CAST(credits_used AS DOUBLE)) as total_used
     FROM {table_name}
     WHERE date >= date_format(current_date, '%Y-%m-01')
+    GROUP BY userid
     """
-    df = fetch_data(query)
-    df['credits_used'] = df['credits_used'].apply(safe_float)
-    df = df.sort_values('date', ascending=False)
-
-    latest = df.groupby('userid', as_index=False).first()[['userid', 'client_type', 'subscription_tier']]
-    used = df.groupby('userid', as_index=False).agg({'credits_used': 'sum'})
-    used.columns = ['userid', 'total_used']
-    bal = latest.merge(used, on='userid')
+    bal = fetch_data(query)
+    bal['total_used'] = bal['total_used'].apply(safe_float)
 
     tier_limits = {'PRO': 1000, 'PROPLUS': 2000, 'POWER': 10000}
     bal['credit_limit'] = bal['subscription_tier'].apply(
@@ -67,10 +64,6 @@ def render_credits_balance(table_name, fetch_data, safe_float,
 
     umap = get_usernames_batch(bal['userid'].tolist())
     bal['username'] = bal['userid'].map(umap)
-    bal = bal.groupby('username', as_index=False).agg({
-        'userid': 'first', 'client_type': 'first', 'subscription_tier': 'first',
-        'total_used': 'sum', 'credit_limit': 'first'
-    })
     bal['remaining'] = bal['credit_limit'] - bal['total_used']
     bal['usage_pct'] = (bal['total_used'] / bal['credit_limit'] * 100).round(1)
     bal = bal.sort_values('total_used', ascending=False)

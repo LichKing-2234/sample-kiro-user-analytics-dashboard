@@ -186,11 +186,21 @@ def execute_athena_query(query):
 def fetch_data(query):
     client = get_athena_client()
     qid = execute_athena_query(query)
-    result = client.get_query_results(QueryExecutionId=qid)
-    columns = [col['Label'] for col in result['ResultSet']['ResultSetMetadata']['ColumnInfo']]
+    columns = None
     rows = []
-    for row in result['ResultSet']['Rows'][1:]:
-        rows.append([field.get('VarCharValue', '') for field in row['Data']])
+    kwargs = {'QueryExecutionId': qid}
+    while True:
+        result = client.get_query_results(**kwargs)
+        if columns is None:
+            columns = [col['Label'] for col in result['ResultSet']['ResultSetMetadata']['ColumnInfo']]
+            data_rows = result['ResultSet']['Rows'][1:]
+        else:
+            data_rows = result['ResultSet']['Rows']
+        for row in data_rows:
+            rows.append([field.get('VarCharValue', '') for field in row['Data']])
+        if 'NextToken' not in result:
+            break
+        kwargs['NextToken'] = result['NextToken']
     return pd.DataFrame(rows, columns=columns)
 
 # --- Theme helpers ---
